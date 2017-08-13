@@ -14,7 +14,6 @@ namespace RunPlexAsService
         private int serverPid = 0;
         private EventLog eventLog1;
         private Log log;
-        private string defaultPath = @"C:\Program Files (x86)\Plex\Plex Media Server";
 
         /// <summary>
         /// Sets the service status.
@@ -48,8 +47,6 @@ namespace RunPlexAsService
         /// <param name="args">The arguments.</param>
         protected override void OnStart(string[] args)
         {
-
-
             // get the path to 'Plex Media Server.exe'
             string plexPath = GetPlexInstallationPath();
 
@@ -158,14 +155,42 @@ namespace RunPlexAsService
         private string GetPlexInstallationPath()
         {
             var returnValue = string.Empty;
+            var configurationNotSet = false;
 
-            // look in the registry for an installation path
-            var ourKey = Registry.LocalMachine;
-            ourKey = ourKey.OpenSubKey(@"SOFTWARE\WOW6432Node\Plex, Inc.\Plex Media Server"); // \Folders
-            var folder = ourKey.GetValue("InstallFolder").ToString();
-            returnValue = Path.Combine(folder, "Plex Media Server.exe");
+            // first read from the config
+            try
+            {
+                var folder = ConfigurationManager.AppSettings.Get("PlexFolder");
+                returnValue = Path.Combine(folder, "Plex Media Server.exe");
+            }
+            catch
+            {
+                configurationNotSet = true;
+            }
 
-            // if we don't find it there, look in the default installation path
+            // then look in the registry for an installation path
+            if (!returnValue.EndsWith("Plex Media Server.exe"))
+            {
+                try
+                {
+                    var ourKey = Registry.LocalMachine;
+                    ourKey = ourKey.OpenSubKey(@"SOFTWARE\WOW6432Node\Plex, Inc.\Plex Media Server"); // \Folders
+                    var folder = ourKey.GetValue("InstallFolder").ToString();
+                    if (configurationNotSet)
+                    {
+                        ConfigurationManager.AppSettings.Set("PlexFolder", folder);
+                        configurationNotSet = false;
+                    }
+
+                    returnValue = Path.Combine(folder, "Plex Media Server.exe");
+                }
+                catch
+                {
+                    // if we get here, it's not in the registry or in the config
+                }
+            }
+
+            // if we don't find it in either place, look in the default install folder
             if (string.IsNullOrWhiteSpace(returnValue))
             {
                 var defaultPath = @"C:\Program Files (x86)\Plex\Plex Media Server";
@@ -176,18 +201,22 @@ namespace RunPlexAsService
                     if (fileName.EndsWith("Plex Media Server.exe"))
                     {
                         returnValue = fileName; // the file names are returned as full paths, so there's nothing to change.
+                        if (configurationNotSet)
+                        {
+                            ConfigurationManager.AppSettings.Set("PlexFolder", defaultPath);
+                            configurationNotSet = false;
+                        }
+
                         break;
                     }
                 }
             }
 
-            //TODO: look elsewhere and other ways
-
-            // if still not found, throw exception to stop service.
+            // if still not found, throw exception to stop service. Tell them to manually set the config file
             if (string.IsNullOrWhiteSpace(returnValue))
             {
-                eventLog1.WriteEntry("Could not determine 'Plex Media Server.exe' location. Service not started.", EventLogEntryType.Error);
-                throw new RunPlexAsServiceException("Could not determine 'Plex Media Server.exe' location. Service not started.");
+                eventLog1.WriteEntry("Could not determine 'Plex Media Server.exe' location. Service not started. Please enter the Path to Plex manually in RunPlexAsService.exe.config.", EventLogEntryType.Error);
+                throw new RunPlexAsServiceException("Could not determine 'Plex Media Server.exe' location. Service not started. Please enter the Path to Plex manually in RunPlexAsService.exe.config.");
             }
 
             return returnValue;
